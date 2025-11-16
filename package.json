@@ -18,5 +18,8 @@
   "license": "MIT",
   "devDependencies": {
     "wrangler": "^3.0.0"
+  },
+  "dependencies": {
+    "crypto-js": "^4.2.0"
   }
 }
