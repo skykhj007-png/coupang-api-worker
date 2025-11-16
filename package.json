@@ -1,0 +1,22 @@
+{
+  "name": "coupang-api-worker",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker for Coupang Partners API",
+  "main": "src/worker.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "coupang",
+    "api"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

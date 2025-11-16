@@ -1,0 +1,14 @@
+name = "coupang-api-worker"
+main = "src/worker.js"
+compatibility_date = "2024-11-16"
+
+# Workers 계정 정보 (배포 시 자동으로 설정됨)
+# account_id는 wrangler login 후 자동으로 추가됩니다
+
+# 환경 변수 (개발용 - 실제 배포 시에는 secret 사용)
+# [vars]
+# ENVIRONMENT = "production"
+
+# Secret 환경 변수 설정 방법:
+# wrangler secret put COUPANG_ACCESS_KEY
+# wrangler secret put COUPANG_SECRET_KEY
