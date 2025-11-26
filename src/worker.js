@@ -8,13 +8,18 @@
  */
 
 // HMAC-SHA256 서명 생성 함수
-async function generateHmac(method, path, secretKey, accessKey) {
-  // YYYYMMDDTHHMMSSZ 형식 (쿠팡 API 공식 형식)
+async function generateHmac(method, path, queryString, secretKey, accessKey) {
+  // 타임스탬프 생성: YYMMDDTHHMMSSZ 형식 (앞 2자리 20 제거)
   const datetime = new Date().toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\.\d{3}/, '');
+    .split('.')[0] + 'Z';  // 2025-01-17T12:34:56Z
+  const formattedDatetime = datetime
+    .replace(/[-:]/g, '')  // 20250117T123456Z
+    .substring(2);         // 250117T123456Z (앞 2자리 제거)
 
-  const message = datetime + method + path;
+  // 메시지 구성: timestamp + method + path + queryString
+  const message = formattedDatetime + method + path + (queryString || '');
+
+  console.log('HMAC Debug:', { formattedDatetime, method, path, queryString, message });
 
   // Web Crypto API 사용 (Cloudflare Workers 환경)
   const encoder = new TextEncoder();
@@ -34,27 +39,44 @@ async function generateHmac(method, path, secretKey, accessKey) {
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
 
-  const authorization = `CEA algorithm=HmacSHA256, access-key=${accessKey}, signed-date=${datetime}, signature=${signatureHex}`;
+  // Authorization 헤더 형식: 쉼표 뒤 공백 포함
+  const authorization = `CEA algorithm=HmacSHA256, access-key=${accessKey}, signed-date=${formattedDatetime}, signature=${signatureHex}`;
 
-  return { authorization, datetime };
+  return { authorization, datetime: formattedDatetime };
 }
 
 // 쿠팡 제품 검색
 async function searchCoupangProducts(keyword, accessKey, secretKey, limit = 10) {
-  const path = `/v2/providers/affiliate_open_api/apis/openapi/products/search?keyword=${encodeURIComponent(keyword)}&limit=${limit}`;
+  // 경로와 쿼리 문자열 분리
+  const path = `/v2/providers/affiliate_open_api/apis/openapi/products/search`;
+  const queryString = `keyword=${encodeURIComponent(keyword)}&limit=${limit}`;
 
-  const { authorization } = await generateHmac('GET', path, secretKey, accessKey);
+  // HMAC 서명 생성 (path와 queryString 모두 포함)
+  const { authorization } = await generateHmac('GET', path, queryString, secretKey, accessKey);
 
-  const response = await fetch(`https://api-gateway.coupang.com${path}`, {
-    method: 'GET',
+  console.log('API Request:', {
+    url: `https://api-gateway.coupang.com${path}?${queryString}`,
     headers: {
-      'Authorization': authorization,
-      'Content-Type': 'application/json;charset=UTF-8'
+      'Authorization': authorization.substring(0, 50) + '...',
+      'X-Requested-By': accessKey
     }
   });
 
+  const response = await fetch(`https://api-gateway.coupang.com${path}?${queryString}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': authorization,
+      'Content-Type': 'application/json;charset=UTF-8',
+      'X-Requested-By': accessKey
+    }
+  });
+
+  console.log('API Response Status:', response.status);
+  console.log('Response Headers:', Object.fromEntries(response.headers));
+
   if (!response.ok) {
     const errorText = await response.text();
+    console.log('Error Response Body:', errorText);
     throw new Error(`Coupang API Error (${response.status}): ${errorText}`);
   }
 
