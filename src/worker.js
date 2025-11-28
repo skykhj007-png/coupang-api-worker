@@ -102,9 +102,82 @@ async function searchCoupangProducts(keyword, accessKey, secretKey, limit = 10) 
   return [];
 }
 
-// 딥링크 생성
-function generateDeepLink(productUrl, accessKey) {
-  return `https://link.coupang.com/a/${accessKey}?url=${encodeURIComponent(productUrl)}`;
+// 쿠팡 공식 딥링크 API 호출 (구매 추적을 위해 필수)
+async function createDeepLink(productUrl, accessKey, secretKey, subId = '') {
+  const path = `/v2/providers/affiliate_open_api/apis/openapi/v1/deeplink`;
+
+  // POST 요청 본문
+  const requestBody = JSON.stringify({
+    coupangUrls: [productUrl],
+    subId: subId
+  });
+
+  // HMAC 서명 생성 (POST 요청이므로 queryString 없음)
+  const { authorization } = await generateHmac('POST', path, '', secretKey, accessKey);
+
+  const response = await fetch(`https://api-gateway.coupang.com${path}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': authorization,
+      'Content-Type': 'application/json;charset=UTF-8'
+    },
+    body: requestBody
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Deeplink API Error:', errorText);
+    throw new Error(`Deeplink API Error (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+
+  // 응답 구조: { rCode: "0", rMessage: "", data: [{ originalUrl, shortenUrl }] }
+  if (data.rCode === '0' && data.data && data.data.length > 0) {
+    return data.data[0].shortenUrl;
+  }
+
+  throw new Error('Failed to create deeplink: ' + JSON.stringify(data));
+}
+
+// 여러 URL을 한 번에 딥링크로 변환 (배치 처리)
+async function createDeepLinks(productUrls, accessKey, secretKey, subId = '') {
+  const path = `/v2/providers/affiliate_open_api/apis/openapi/v1/deeplink`;
+
+  const requestBody = JSON.stringify({
+    coupangUrls: productUrls,
+    subId: subId
+  });
+
+  const { authorization } = await generateHmac('POST', path, '', secretKey, accessKey);
+
+  const response = await fetch(`https://api-gateway.coupang.com${path}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': authorization,
+      'Content-Type': 'application/json;charset=UTF-8'
+    },
+    body: requestBody
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Deeplink API Error:', errorText);
+    throw new Error(`Deeplink API Error (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+
+  if (data.rCode === '0' && data.data) {
+    // URL -> shortenUrl 매핑 반환
+    const urlMap = {};
+    data.data.forEach(item => {
+      urlMap[item.originalUrl] = item.shortenUrl;
+    });
+    return urlMap;
+  }
+
+  throw new Error('Failed to create deeplinks: ' + JSON.stringify(data));
 }
 
 // CORS 헤더
@@ -196,10 +269,23 @@ export default {
           // 캐시 미스 - API 호출
           const products = await searchCoupangProducts(keyword, accessKey, secretKey, limit);
 
-          // 파트너스 링크 추가
+          // 공식 딥링크 API를 사용하여 파트너스 링크 생성 (구매 추적용)
+          const productUrls = products.map(p => p.url).filter(Boolean);
+          let deepLinkMap = {};
+
+          if (productUrls.length > 0) {
+            try {
+              const subId = url.searchParams.get('subId') || '';
+              deepLinkMap = await createDeepLinks(productUrls, accessKey, secretKey, subId);
+            } catch (deepLinkError) {
+              console.error('Deeplink creation failed:', deepLinkError.message);
+              // 딥링크 생성 실패시에도 검색 결과는 반환
+            }
+          }
+
           const productsWithLinks = products.map(product => ({
             ...product,
-            partnerLink: generateDeepLink(product.url, accessKey)
+            partnerLink: deepLinkMap[product.url] || product.url
           }));
 
           response = jsonResponse({
@@ -226,9 +312,10 @@ export default {
         return response;
       }
 
-      // 딥링크 생성 엔드포인트
+      // 딥링크 생성 엔드포인트 (공식 API 사용)
       if (url.pathname === '/api/deeplink') {
         const productUrl = url.searchParams.get('url');
+        const subId = url.searchParams.get('subId') || '';
 
         if (!productUrl) {
           return jsonResponse({
@@ -238,20 +325,22 @@ export default {
         }
 
         const accessKey = env.COUPANG_ACCESS_KEY;
+        const secretKey = env.COUPANG_SECRET_KEY;
 
-        if (!accessKey) {
+        if (!accessKey || !secretKey) {
           return jsonResponse({
             success: false,
-            error: 'Access key not configured'
+            error: 'API keys not configured'
           }, 500);
         }
 
-        const deepLink = generateDeepLink(productUrl, accessKey);
+        const partnerLink = await createDeepLink(productUrl, accessKey, secretKey, subId);
 
         return jsonResponse({
           success: true,
           originalUrl: productUrl,
-          partnerLink: deepLink
+          partnerLink: partnerLink,
+          subId: subId || null
         });
       }
 
